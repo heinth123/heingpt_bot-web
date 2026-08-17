@@ -158,6 +158,12 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
         </div>
 
         <div id="chat-container" class="flex-1 overflow-y-auto p-6 space-y-6">
+            {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                    <div class="bg-blue-500/20 border border-blue-500 text-blue-300 p-3 rounded-xl max-w-md mx-auto text-sm text-center mb-4">{{ messages[0] }}</div>
+                {% endif %}
+            {% endwith %}
+
             {% if not active_chat or not active_chat.messages %}
                 <div class="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto">
                     <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center text-3xl mb-4 shadow-lg shadow-blue-500/20">⚡</div>
@@ -235,7 +241,6 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
                             </div>
                             <i class="fa-solid fa-arrow-up-right-from-square text-gray-500 text-xs"></i>
                         </a>
-                        <!-- Future Hz apps can be added here easily! -->
                     </div>
                 </div>
             </div>
@@ -244,7 +249,7 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
 
     <script>
         const chatContainer = document.getElementById('chat-container');
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+        if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
         const chatId = "{{ active_chat.id if active_chat else '' }}";
 
         function openSettings() {
@@ -257,44 +262,47 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
             document.getElementById('settings-modal').classList.add('hidden');
         }
 
-        document.getElementById('chat-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const inputField = document.getElementById('user-input');
-            const message = inputField.value.trim();
-            if (!message) return;
-            inputField.value = '';
+        const chatForm = document.getElementById('chat-form');
+        if (chatForm) {
+            chatForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const inputField = document.getElementById('user-input');
+                const message = inputField.value.trim();
+                if (!message) return;
+                inputField.value = '';
 
-            chatContainer.innerHTML += `
-                <div class="flex justify-end">
-                    <div class="bg-[#2d2e30] text-white px-5 py-3.5 rounded-2xl max-w-2xl text-sm leading-relaxed shadow-sm">${message}</div>
-                </div>
-            `;
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+                chatContainer.innerHTML += `
+                    <div class="flex justify-end">
+                        <div class="bg-[#2d2e30] text-white px-5 py-3.5 rounded-2xl max-w-2xl text-sm leading-relaxed shadow-sm">${message}</div>
+                    </div>
+                `;
+                chatContainer.scrollTop = chatContainer.scrollHeight;
 
-            try {
-                const res = await fetch('/send', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ message, chat_id: chatId })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    if (!chatId && data.new_chat_id) {
-                        window.location.href = `/chat/${data.new_chat_id}`;
-                        return;
+                try {
+                    const res = await fetch('/send', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ message, chat_id: chatId })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        if (!chatId && data.new_chat_id) {
+                            window.location.href = `/chat/${data.new_chat_id}`;
+                            return;
+                        }
+                        chatContainer.innerHTML += `
+                            <div class="flex gap-4 max-w-3xl mt-4">
+                                <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex-shrink-0 flex items-center justify-center text-xs font-bold text-white">AI</div>
+                                <div class="text-gray-200 text-sm leading-relaxed pt-1 whitespace-pre-wrap">${data.reply}</div>
+                            </div>
+                        `;
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
                     }
-                    chatContainer.innerHTML += `
-                        <div class="flex gap-4 max-w-3xl mt-4">
-                            <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex-shrink-0 flex items-center justify-center text-xs font-bold text-white">AI</div>
-                            <div class="text-gray-200 text-sm leading-relaxed pt-1 whitespace-pre-wrap">${data.reply}</div>
-                        </div>
-                    `;
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                } catch (err) {
+                    console.error(err);
                 }
-            } catch (err) {
-                console.error(err);
-            }
-        });
+            });
+        }
     </script>
 """)
 
@@ -343,7 +351,7 @@ def update_settings():
     new_password = request.form.get('new_password')
     ai_memory = request.form.get('ai_memory')
 
-    if display_name:
+    if display_name is not None:
         current_user.display_name = display_name
     if ai_memory is not None:
         current_user.ai_memory = ai_memory
@@ -351,8 +359,8 @@ def update_settings():
         current_user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
 
     db.session.commit()
-    flash('Settings updated successfully!')
-    return redirect(request.referrer or url_for('new_chat'))
+    flash('Settings & Memory saved successfully!')
+    return redirect(url_for('new_chat'))
 
 @app.route('/new')
 @login_required
@@ -402,10 +410,10 @@ def send_message():
     db.session.add(Message(chat_id=chat.id, role='user', content=user_msg))
     db.session.commit()
 
-    # Build history with AI Memory injection
-    system_prompt = f"You are HeinGPT, a friendly, intelligent AI assistant built by Hudson. Use emojis and be engaging!"
-    if current_user.ai_memory:
-        system_prompt += f"\n\nHere is what you know about the user (User Memory):\n{current_user.ai_memory}"
+    # Build history with persistent AI Memory injection
+    system_prompt = "You are HeinGPT, a friendly, intelligent AI assistant built by Hudson. Use emojis and be engaging!"
+    if current_user.ai_memory and current_user.ai_memory.strip():
+        system_prompt += f"\n\nHere is what you permanently know about the user (User Memory):\n{current_user.ai_memory}"
 
     history = [{"role": "system", "content": system_prompt}]
     for m in chat.messages:
