@@ -27,7 +27,9 @@ login_manager.login_view = 'login'
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
+    display_name = db.Column(db.String(150), default="")
     password = db.Column(db.String(200), nullable=False)
+    ai_memory = db.Column(db.Text, default="")
     chats = db.relationship('Chat', backref='user', lazy=True, cascade="all, delete-orphan")
 
 class Chat(db.Model):
@@ -68,7 +70,7 @@ def ask_groq(history):
     except Exception as e:
         return f"Connection Exception: {e}"
 
-# ----------------- HTML TEMPLATES (Gemini Style UI) -----------------
+# ----------------- HTML TEMPLATES (Gemini Style UI + Settings Modal) -----------------
 BASE_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -132,12 +134,19 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
                 </a>
             {% endfor %}
         </div>
+        
+        <!-- User Profile & Settings / Logout bar -->
         <div class="p-4 border-t border-[#333537] flex items-center justify-between">
             <div class="flex items-center gap-3 truncate">
-                <div class="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center font-bold text-white uppercase">{{ current_user.username[0] }}</div>
-                <span class="text-sm font-medium truncate">{{ current_user.username }}</span>
+                <div class="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center font-bold text-white uppercase">
+                    {{ current_user.display_name[0] if current_user.display_name else current_user.username[0] }}
+                </div>
+                <span class="text-sm font-medium truncate">{{ current_user.display_name if current_user.display_name else current_user.username }}</span>
             </div>
-            <a href="/logout" class="text-gray-400 hover:text-red-400 p-2" title="Log Out"><i class="fa-solid fa-arrow-right-from-bracket"></i></a>
+            <div class="flex items-center gap-1">
+                <button onclick="openSettings()" class="text-gray-400 hover:text-white p-2 transition" title="Settings"><i class="fa-solid fa-gear"></i></button>
+                <a href="/logout" class="text-gray-400 hover:text-red-400 p-2 transition" title="Log Out"><i class="fa-solid fa-arrow-right-from-bracket"></i></a>
+            </div>
         </div>
     </div>
 
@@ -152,7 +161,7 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
             {% if not active_chat or not active_chat.messages %}
                 <div class="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto">
                     <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center text-3xl mb-4 shadow-lg shadow-blue-500/20">⚡</div>
-                    <h2 class="text-2xl font-bold text-white mb-2">Hello, {{ current_user.username }}!</h2>
+                    <h2 class="text-2xl font-bold text-white mb-2">Hello, {{ current_user.display_name if current_user.display_name else current_user.username }}!</h2>
                     <p class="text-gray-400 text-sm">How can I help you build, code, or explore today?</p>
                 </div>
             {% else %}
@@ -183,11 +192,70 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
         </div>
     </div>
 
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-[#1e1f20] border border-[#333537] rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b border-[#333537] flex items-center justify-between">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2"><i class="fa-solid fa-gear text-blue-400"></i> Settings & Hz Hub</h3>
+                <button onclick="closeSettings()" class="text-gray-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto space-y-6 flex-1">
+                <form action="/update-settings" method="POST" class="space-y-4">
+                    <div class="text-xs font-bold text-blue-400 uppercase tracking-wider">Account Preferences</div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Display Name</label>
+                        <input type="text" name="display_name" value="{{ current_user.display_name }}" class="w-full bg-[#131314] border border-[#333537] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">New Password (leave blank to keep current)</label>
+                        <input type="password" name="new_password" placeholder="••••••••" class="w-full bg-[#131314] border border-[#333537] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                    </div>
+
+                    <div class="pt-2 text-xs font-bold text-blue-400 uppercase tracking-wider">AI Memory</div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">What should HeinGPT know about you?</label>
+                        <textarea name="ai_memory" rows="3" placeholder="e.g. I am 12 years old, love coding, and building apps!" class="w-full bg-[#131314] border border-[#333537] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">{{ current_user.ai_memory }}</textarea>
+                    </div>
+
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 rounded-lg text-sm transition">Save Changes</button>
+                </form>
+
+                <!-- MORE FROM HZ SECTION -->
+                <div class="pt-4 border-t border-[#333537]">
+                    <div class="text-xs font-bold text-purple-400 uppercase tracking-wider mb-3">More from Hz Network</div>
+                    <div class="space-y-2">
+                        <a href="https://minecraft-portal.onrender.com/" target="_blank" class="flex items-center justify-between p-3 rounded-xl bg-[#131314] hover:bg-[#252628] border border-[#333537] transition group">
+                            <div class="flex items-center gap-3">
+                                <span class="text-2xl">⛏️</span>
+                                <div>
+                                    <div class="text-sm font-semibold text-white group-hover:text-blue-400 transition">Minecraft Community</div>
+                                    <div class="text-xs text-gray-400">Explore servers, builds, and chat with players</div>
+                                </div>
+                            </div>
+                            <i class="fa-solid fa-arrow-up-right-from-square text-gray-500 text-xs"></i>
+                        </a>
+                        <!-- Future Hz apps can be added here easily! -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const chatContainer = document.getElementById('chat-container');
         chatContainer.scrollTop = chatContainer.scrollHeight;
-
         const chatId = "{{ active_chat.id if active_chat else '' }}";
+
+        function openSettings() {
+            document.getElementById('settings-modal').classList.remove('hidden');
+            document.getElementById('settings-modal').classList.add('flex');
+        }
+
+        function closeSettings() {
+            document.getElementById('settings-modal').classList.remove('flex');
+            document.getElementById('settings-modal').classList.add('hidden');
+        }
 
         document.getElementById('chat-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -196,7 +264,6 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
             if (!message) return;
             inputField.value = '';
 
-            // Append user bubble
             chatContainer.innerHTML += `
                 <div class="flex justify-end">
                     <div class="bg-[#2d2e30] text-white px-5 py-3.5 rounded-2xl max-w-2xl text-sm leading-relaxed shadow-sm">${message}</div>
@@ -216,7 +283,6 @@ CHAT_TEMPLATE = BASE_TEMPLATE.replace("{% block content %}{% endblock %}", """
                         window.location.href = `/chat/${data.new_chat_id}`;
                         return;
                     }
-                    // Append AI bubble
                     chatContainer.innerHTML += `
                         <div class="flex gap-4 max-w-3xl mt-4">
                             <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex-shrink-0 flex items-center justify-center text-xs font-bold text-white">AI</div>
@@ -257,7 +323,7 @@ def register():
             flash('Username already exists!')
         else:
             hashed_pw = generate_password_hash(request.form['password'], method='pbkdf2:sha256')
-            new_user = User(username=username, password=hashed_pw)
+            new_user = User(username=username, display_name=username, password=hashed_pw)
             db.session.add(new_user)
             db.session.commit()
             login_user(new_user)
@@ -269,6 +335,24 @@ def register():
 def logout():
     logout_user()
     return redirect(url_for('login'))
+
+@app.route('/update-settings', methods=['POST'])
+@login_required
+def update_settings():
+    display_name = request.form.get('display_name')
+    new_password = request.form.get('new_password')
+    ai_memory = request.form.get('ai_memory')
+
+    if display_name:
+        current_user.display_name = display_name
+    if ai_memory is not None:
+        current_user.ai_memory = ai_memory
+    if new_password:
+        current_user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
+
+    db.session.commit()
+    flash('Settings updated successfully!')
+    return redirect(request.referrer or url_for('new_chat'))
 
 @app.route('/new')
 @login_required
@@ -304,7 +388,6 @@ def send_message():
     if not user_msg:
         return jsonify({'success': False})
 
-    # Create chat if it doesn't exist
     if not chat_id:
         title = user_msg[:30] + "..." if len(user_msg) > 30 else user_msg
         chat = Chat(title=title, user_id=current_user.id)
@@ -316,19 +399,20 @@ def send_message():
         if chat.user_id != current_user.id:
             return jsonify({'success': False})
 
-    # Save user message
     db.session.add(Message(chat_id=chat.id, role='user', content=user_msg))
     db.session.commit()
 
-    # Build history for Groq
-    history = [{"role": "system", "content": "You are HeinGPT, a friendly, intelligent AI assistant built by Hudson. Use emojis and be engaging!"}]
+    # Build history with AI Memory injection
+    system_prompt = f"You are HeinGPT, a friendly, intelligent AI assistant built by Hudson. Use emojis and be engaging!"
+    if current_user.ai_memory:
+        system_prompt += f"\n\nHere is what you know about the user (User Memory):\n{current_user.ai_memory}"
+
+    history = [{"role": "system", "content": system_prompt}]
     for m in chat.messages:
         history.append({"role": m.role, "content": m.content})
 
-    # Get AI response
     ai_reply = ask_groq(history)
 
-    # Save AI message
     db.session.add(Message(chat_id=chat.id, role='assistant', content=ai_reply))
     db.session.commit()
 
